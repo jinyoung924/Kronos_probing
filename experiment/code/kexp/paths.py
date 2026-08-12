@@ -44,12 +44,14 @@ def scratch_root() -> Path:
 
 # --- 하위 디렉토리 ---------------------------------------------------------
 
-def data_dir(tag: str) -> Path:
-    return drive_root() / "data" / tag
+def data_dir(tag: str, variant: str = "") -> Path:
+    """variant 는 노이즈 종류('ou' / 'rw') 처럼 같은 tag 안의 갈래를 가리킨다."""
+    return drive_root() / "data" / tag / variant if variant else drive_root() / "data" / tag
 
 
-def activations_dir(tag: str) -> Path:
-    return scratch_root() / "activations" / tag
+def activations_dir(tag: str, variant: str = "") -> Path:
+    base = scratch_root() / "activations" / tag
+    return base / variant if variant else base
 
 
 def results_dir(tag: str) -> Path:

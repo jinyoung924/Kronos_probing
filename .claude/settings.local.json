@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(python3 -c \"import sys, torch, pandas, numpy, einops, huggingface_hub; print\\('py', sys.version.split\\(\\)[0]\\); print\\('torch', torch.__version__\\)\")",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -)",
+      "Bash(python3 -c \"import sys; print\\(sys.prefix\\); print\\('venv' if sys.prefix != sys.base_prefix else 'system python'\\)\")",
+      "Bash(curl -s -o /dev/null -w \"huggingface.co -> %{http_code}\\\\n\" --max-time 10 https://huggingface.co/api/models/NeoQuasar/Kronos-small)"
     ]
   }
 }
