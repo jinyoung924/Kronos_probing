@@ -10,8 +10,8 @@
 #  아래 STAGE 값만 바꿔가며 재실행하면 된다.
 # ==========================================================================
 
-STAGE = 0            # 실행할 stage 번호
-EXTRA_ARGS = ""      # 예: "--force"
+STAGE = 0            # 실행할 stage 번호. 리스트로 주면 순서대로 실행한다: [1, 2, 3]
+EXTRA_ARGS = ""      # 문자열이면 모든 stage 에, dict 면 stage 별로: {1: "--force"}
 BRANCH = "master"
 REINSTALL_DEPS = False   # 의존성을 다시 설치하려면 True
 
@@ -66,18 +66,26 @@ else:
     print("\n[deps] 이미 설치됨 (다시 설치하려면 REINSTALL_DEPS = True)")
 
 # 4) stage 실행 --------------------------------------------------------------
-pattern = f"{REPO_DIR}/experiment/code/stages/stage{STAGE}_*.py"
-matches = sorted(glob.glob(pattern))
-if not matches:
-    raise FileNotFoundError(f"stage 스크립트를 찾을 수 없다: {pattern}")
-if len(matches) > 1:
-    raise RuntimeError(f"stage {STAGE} 에 해당하는 스크립트가 여러 개다: {matches}")
-script = matches[0]
+env_prefix = f"KEXP_DRIVE={DRIVE_DIR} KEXP_SCRATCH={SCRATCH_DIR} PYTHONUNBUFFERED=1"
+stages = STAGE if isinstance(STAGE, (list, tuple)) else [STAGE]
+results = {}
 
-env_prefix = (
-    f"KEXP_DRIVE={DRIVE_DIR} KEXP_SCRATCH={SCRATCH_DIR} "
-    f"PYTHONUNBUFFERED=1"
-)
-print(f"\n{'=' * 70}\n실행: {os.path.basename(script)}\n{'=' * 70}")
-rc = sh(f"{env_prefix} python {script} {EXTRA_ARGS}", cwd=REPO_DIR, check=False)
-print(f"\n{'=' * 70}\nstage {STAGE} 종료 코드: {rc}\n{'=' * 70}")
+for stage in stages:
+    pattern = f"{REPO_DIR}/experiment/code/stages/stage{stage}_*.py"
+    matches = sorted(glob.glob(pattern))
+    if not matches:
+        raise FileNotFoundError(f"stage 스크립트를 찾을 수 없다: {pattern}")
+    if len(matches) > 1:
+        raise RuntimeError(f"stage {stage} 에 해당하는 스크립트가 여러 개다: {matches}")
+    script = matches[0]
+    extra = EXTRA_ARGS.get(stage, "") if isinstance(EXTRA_ARGS, dict) else EXTRA_ARGS
+
+    print(f"\n{'=' * 70}\n실행: {os.path.basename(script)} {extra}\n{'=' * 70}")
+    rc = sh(f"{env_prefix} python {script} {extra}", cwd=REPO_DIR, check=False)
+    results[stage] = rc
+    print(f"\n{'-' * 70}\nstage {stage} 종료 코드: {rc}\n{'-' * 70}")
+    if rc != 0:
+        print(f"stage {stage} 가 실패했다. 이후 stage 는 실행하지 않는다.")
+        break
+
+print(f"\n{'=' * 70}\n전체 결과: {results}\n{'=' * 70}")

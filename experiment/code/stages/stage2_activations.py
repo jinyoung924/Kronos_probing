@@ -57,6 +57,10 @@ def main(args) -> int:
     print(f"  출력      : {out_base}")
     print(f"  배치 크기 : {args.batch_size}")
 
+    data_meta = json.loads((data_dir / "meta.json").read_text())
+    fp = data_meta.get("data_fingerprint")
+    print(f"  데이터 지문: {fp}")
+
     ts = pd.DatetimeIndex(np.load(data_dir / "timestamps.npy"))
     stamp_np = kl.make_stamps(ts)
     print(f"  타임스탬프: {ts[0]} .. {ts[-1]}  -> stamp {stamp_np.shape}")
@@ -78,12 +82,15 @@ def main(args) -> int:
         # 설정 해시가 지금 요청한 것과 같을 때만 건너뛴다.
         if (out_root / "meta.json").exists() and not args.force:
             prev = A.read_meta(out_root)
-            if prev.get("n") == len(x) and prev.get("config_hash") == cfg.hash():
-                print(f"  [{cls}] 동일 설정의 산출물이 있다 (n={prev['n']}). 건너뛴다.")
+            same = (prev.get("n") == len(x)
+                    and prev.get("config_hash") == cfg.hash()
+                    and prev.get("data_fingerprint") == fp)
+            if same:
+                print(f"  [{cls}] 동일 설정·동일 데이터의 산출물이 있다 (n={prev['n']}). 건너뛴다.")
                 stats[cls] = prev
                 continue
-            print(f"  [{cls}] 기존 산출물이 다르다 "
-                  f"(n={prev.get('n')} vs 요청 {len(x)}). 다시 추출한다.")
+            print(f"  [{cls}] 기존 산출물이 다르다 (n={prev.get('n')} vs {len(x)}, "
+                  f"지문 {prev.get('data_fingerprint')} vs {fp}). 다시 추출한다.")
 
         print(f"  [{cls}] {x.shape} 추출 시작")
         t1 = time.time()
@@ -93,6 +100,7 @@ def main(args) -> int:
         st["model"] = args.model
         st["noise"] = args.noise
         st["config_hash"] = cfg.hash()
+        st["data_fingerprint"] = fp
         (out_root / "meta.json").write_text(json.dumps(st, indent=2, ensure_ascii=False))
         stats[cls] = st
         gb = st["n_layers"] * st["n"] * st["T"] * st["D"] * 2 / 1024**3

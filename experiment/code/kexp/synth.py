@@ -64,13 +64,21 @@ def aggregate_paths(paths: np.ndarray, n_micro: int) -> np.ndarray:
 
 def make_noise(rng, n: int, n_total: int, cfg, noise_type: str) -> np.ndarray:
     """[n, n_total] 노이즈 경로 W(tau)."""
-    eps = rng.standard_normal((n, n_total)) * cfg.sigma
     if noise_type == "rw":
-        return np.cumsum(eps, axis=1)
+        # 랜덤워크는 정상 분포가 없다. 0 에서 출발하는 것이 정의 그 자체다.
+        return np.cumsum(rng.standard_normal((n, n_total)) * cfg.sigma, axis=1)
+
     if noise_type == "ou":
-        # x[k] = (1-theta) x[k-1] + eps[k] 를 IIR 필터로 한 번에 푼다.
         from scipy.signal import lfilter
-        return lfilter([1.0], [1.0, -(1.0 - cfg.ou_theta)], eps, axis=1)
+        # burn-in 이 필수다. 영 초기조건으로 시작하면 모든 샘플이 같은 지점에서
+        # 출발해 초기 구간의 분산이 정상상태보다 작아진다. 그 인위적인 공통
+        # 출발점은 시퀀스 전체 z-score 와 결합해 첫 토큰의 클래스 분리도를
+        # 실제보다 크게 부풀린다 (정상상태 도달까지 약 1/theta 스텝).
+        burn = min(int(10.0 / cfg.ou_theta), 20000)
+        eps = rng.standard_normal((n, n_total + burn)) * cfg.sigma
+        w = lfilter([1.0], [1.0, -(1.0 - cfg.ou_theta)], eps, axis=1)
+        return w[:, burn:]
+
     raise ValueError(f"알 수 없는 noise_type: {noise_type}")
 
 
@@ -116,6 +124,21 @@ def make_timestamps(cfg) -> pd.DatetimeIndex:
 
 
 # --- 검증 -------------------------------------------------------------------
+
+def fingerprint(*arrays: np.ndarray, n_head: int = 8) -> str:
+    """데이터셋 내용 지문.
+
+    config_hash 만으로는 부족하다. 생성 로직(synth.py)이 바뀌어도 설정값은
+    그대로일 수 있고, 그러면 하위 stage 가 낡은 산출물을 조용히 재사용한다.
+    실제 값에서 지문을 떠서 하위 stage 가 대조하게 한다.
+    """
+    import hashlib
+    h = hashlib.sha256()
+    for a in arrays:
+        h.update(np.ascontiguousarray(a[:n_head], dtype=np.float32).tobytes())
+        h.update(str(a.shape).encode())
+    return h.hexdigest()[:16]
+
 
 def check_coherence(x: np.ndarray, tol: float = 1e-5) -> dict:
     """L <= min(O,C) <= max(O,C) <= H 위반 여부."""

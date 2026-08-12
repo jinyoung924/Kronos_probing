@@ -187,6 +187,7 @@ def build_variant(cfg, noise_type: str, force: bool) -> dict:
     np.save(out_dir / "timestamps.npy", ts.values)
     meta = {
         "config_hash": cfg.hash(),
+        "data_fingerprint": synth.fingerprint(x_base, x_trend),
         "noise_type": noise_type,
         "data_cfg": cfg.to_dict()["data"],
         "coherence": {"base": coh_b, "trend": coh_s},
