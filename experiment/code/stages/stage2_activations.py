@@ -42,7 +42,10 @@ def main(args) -> int:
     t0 = time.time()
     cfg = dataclasses.replace(CFG, model=resolve_model(args.model, CFG.model.max_context))
     data_dir = paths.data_dir(cfg.tag, args.noise)
-    out_base = paths.activations_dir(cfg.tag, f"{args.noise}/{args.model}")
+    # 스모크 산출물은 본 실행과 절대 섞이면 안 된다. 같은 디렉토리를 쓰면
+    # 8샘플짜리 meta.json 때문에 본 실행이 통째로 건너뛰어진다.
+    variant = f"{args.noise}/{args.model}" + ("_smoke" if args.smoke else "")
+    out_base = paths.activations_dir(cfg.tag, variant)
 
     if not (data_dir / "meta.json").exists():
         print(f"Stage 1 산출물이 없다: {data_dir}. 먼저 stage1 을 실행할 것.")
@@ -70,11 +73,17 @@ def main(args) -> int:
         if args.smoke:
             x = x[: args.smoke_n]
         out_root = out_base / cls
-        done = (out_root / "meta.json").exists()
-        if done and not args.force:
-            print(f"  [{cls}] 이미 존재한다. 다시 만들려면 --force")
-            stats[cls] = A.read_meta(out_root)
-            continue
+
+        # 재개 판정은 파일 존재만으로 하면 안 된다. 기존 산출물의 샘플 수와
+        # 설정 해시가 지금 요청한 것과 같을 때만 건너뛴다.
+        if (out_root / "meta.json").exists() and not args.force:
+            prev = A.read_meta(out_root)
+            if prev.get("n") == len(x) and prev.get("config_hash") == cfg.hash():
+                print(f"  [{cls}] 동일 설정의 산출물이 있다 (n={prev['n']}). 건너뛴다.")
+                stats[cls] = prev
+                continue
+            print(f"  [{cls}] 기존 산출물이 다르다 "
+                  f"(n={prev.get('n')} vs 요청 {len(x)}). 다시 추출한다.")
 
         print(f"  [{cls}] {x.shape} 추출 시작")
         t1 = time.time()
@@ -95,10 +104,14 @@ def main(args) -> int:
         if st["n_nan"]:
             print(f"  [실패] {cls} 에 NaN {st['n_nan']}개")
             ok = False
-    shapes = {c: (s["n"], s["T"], s["D"], s["n_layers"]) for c, s in stats.items()}
-    print(f"  shape: {shapes}")
+    shapes = {c: (s["n_layers"], s["n"], s["T"], s["D"]) for c, s in stats.items()}
+    print(f"  저장 형태 [L, N, T, D]: {shapes}")
     if len(set(shapes.values())) != 1:
         print("  [실패] 두 클래스의 shape 이 다르다.")
+        ok = False
+    n_got = stats["base"]["n"]
+    if not args.smoke and n_got != cfg.data.n_samples:
+        print(f"  [실패] 샘플 수가 설정({cfg.data.n_samples})과 다르다: {n_got}")
         ok = False
 
     # 저장된 값이 실제로 다시 읽히는지, 그리고 두 클래스가 실제로 다른지 확인.
