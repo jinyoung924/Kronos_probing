@@ -27,12 +27,24 @@ class ModelCfg:
     clip: float = 5.0        # KronosPredictor 의 outlier clipping 범위 (명세 3절)
 
 
-# 이름 -> (tokenizer_id, model_id, max_context). --model 플래그로 전환한다.
+# 이름 -> (tokenizer_id, model_id, 학습 시 컨텍스트). --model 플래그로 전환한다.
+#
+# max_context 는 가중치의 속성이 아니라 런타임 인자다. Kronos 는 절대 위치
+# 임베딩 없이 RoPE 만 쓰므로 컨텍스트 길이를 자유롭게 줄일 수 있다. mini 를
+# 로컬 프록시로 쓸 때는 반드시 512 를 강제해야 base 와 같은 AR 롤링 분기를 탄다.
 MODEL_ZOO = {
     "mini": ("NeoQuasar/Kronos-Tokenizer-2k", "NeoQuasar/Kronos-mini", 2048),
     "small": ("NeoQuasar/Kronos-Tokenizer-base", "NeoQuasar/Kronos-small", 512),
     "base": ("NeoQuasar/Kronos-Tokenizer-base", "NeoQuasar/Kronos-base", 512),
 }
+
+
+def resolve_model(name: str, max_context: int = 512) -> ModelCfg:
+    """--model 인자 -> ModelCfg. max_context 는 항상 실험 설정값으로 강제한다."""
+    if name not in MODEL_ZOO:
+        raise ValueError(f"알 수 없는 모델: {name}. 가능: {list(MODEL_ZOO)}")
+    tok_id, model_id, _ = MODEL_ZOO[name]
+    return ModelCfg(tokenizer_id=tok_id, model_id=model_id, max_context=max_context)
 
 
 # --- 합성 데이터셋 (명세 1, 2절) ----------------------------------------------

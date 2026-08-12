@@ -5,7 +5,8 @@
       "Bash(python3 -c ' *)",
       "Bash(python3 -)",
       "Bash(python3 -c \"import sys; print\\(sys.prefix\\); print\\('venv' if sys.prefix != sys.base_prefix else 'system python'\\)\")",
-      "Bash(curl -s -o /dev/null -w \"huggingface.co -> %{http_code}\\\\n\" --max-time 10 https://huggingface.co/api/models/NeoQuasar/Kronos-small)"
+      "Bash(curl -s -o /dev/null -w \"huggingface.co -> %{http_code}\\\\n\" --max-time 10 https://huggingface.co/api/models/NeoQuasar/Kronos-small)",
+      "Bash(~/.venvs/kronos/bin/python -)"
     ]
   }
 }
