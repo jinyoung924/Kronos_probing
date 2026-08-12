@@ -263,6 +263,8 @@ def main(args) -> int:
     arms, lam_set = [], set()
     for k in res:
         a, l = k.rsplit("|", 1)
+        if a.startswith("REF_"):      # 목표 분포는 개입 팔이 아니다
+            continue
         if a not in arms:
             arms.append(a)
         lam_set.add(float(l))
@@ -311,6 +313,33 @@ def main(args) -> int:
         print(f"  {a:<28}{l_up:>10}{up['frac_positive']:>8.1%}{up['p_sign']:>9.1e}"
               f"{l_dn:>10}{dn['frac_positive']:>8.1%}{dn['p_sign']:>9.1e}"
               f"{min_var:>8.3f}{viol:>9.2%}")
+
+    section("2b. 목표 분포와의 대조 (개념 설치인가, 정형화인가)")
+    ref_key = "REF_trend_unsteered|0.0"
+    if ref_key in res:
+        from scipy import stats as st
+        ref = np.asarray(res[ref_key]["slopes"], dtype=np.float64)
+        print(f"  목표(진짜 trend 입력, 개입 없음): 평균 {ref.mean():.5f}, "
+              f"std {ref.std(ddof=1):.5f}, 양수 {int((ref>0).sum())}/{len(ref)}")
+        print(f"  기준선(base 입력, 개입 없음)    : 평균 {base.mean():.5f}, "
+              f"std {base.std(ddof=1):.5f}, 양수 {int((base>0).sum())}/{len(base)}")
+        print("\n  조정된 base 출력이 목표 분포와 얼마나 닮았는가 (KS 검정, p 클수록 유사)")
+        print(f"  {'arm':<28}{'lambda':>8}{'평균차':>10}{'std비':>8}{'KS p':>9}")
+        for a in arms:
+            best_p, best_l = -1.0, None
+            for l in [x for x in lams if x > 0]:
+                sl = np.asarray(res[f"{a}|{l}"]["slopes"], dtype=np.float64)
+                pv = float(st.ks_2samp(sl, ref).pvalue)
+                if pv > best_p:
+                    best_p, best_l = pv, l
+            sl = np.asarray(res[f"{a}|{best_l}"]["slopes"], dtype=np.float64)
+            print(f"  {a:<28}{best_l:>8}{sl.mean()-ref.mean():>10.5f}"
+                  f"{sl.std(ddof=1)/ref.std(ddof=1):>8.3f}{best_p:>9.2e}")
+        print("\n  KS p 가 모든 lambda 에서 매우 작으면, 개입은 개념을 설치한 것이 아니라")
+        print("  저밀도 영역에서 정형화된 출력을 만든 것에 가깝다.")
+    else:
+        print(f"  [건너뜀] 목표 분포가 없다. stage5 를 --reference-trend 로 한 번 더 실행할 것.")
+        print(f"           (조합 1개, 약 2~7분. 개념 설치와 정형화를 구분하는 유일한 대조군이다)")
 
     section("3. 판정")
     paper = [r for r in rows if r["group"] == "paper"]

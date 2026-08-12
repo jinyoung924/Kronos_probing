@@ -140,7 +140,8 @@ def main(args) -> int:
 
     # 입력: base 클래스(추세 없음)의 held-out 표본
     idx_tr, idx_te = LD.split_indices(cfg.data.n_samples, cfg.probe.test_ratio, cfg.data.seed)
-    x_all = np.load(data_dir / "base.npz")["x"]
+    src = "trend" if args.reference_trend else "base"
+    x_all = np.load(data_dir / f"{src}.npz")["x"]
     x_raw = x_all[idx_te[:n_eval]]
     ts = pd.DatetimeIndex(np.load(data_dir / "timestamps.npy"))
     x_norm, x_mean, x_std = kl.normalize_batch(x_raw, cfg.model.clip)
@@ -149,7 +150,7 @@ def main(args) -> int:
                          periods=pred_len, freq=f"{cfg.data.freq_minutes}min")
     x_stamp = np.repeat(stamp[None], len(x_raw), axis=0)
     y_stamp = np.repeat(kl.make_stamps(y_ts)[None], len(x_raw), axis=0)
-    print(f"  입력 {x_norm.shape} (base 클래스 held-out)")
+    print(f"  입력 {x_norm.shape} ({src} 클래스 held-out)")
 
     section("2. 모델 로드")
     tokenizer, model, device = kl.load_kronos(cfg.model)
@@ -177,7 +178,14 @@ def main(args) -> int:
         ("H_ctrl_lda_equalnorm",        dict(method="lda", form="vector", scope="all", layers=no_l0, lda_scale="equal")),
         ("I_ctrl_median_vector",        dict(method="median", form="vector", scope="all", layers=no_l0)),
     ]
-    if args.arms == "paper":
+    if args.reference_trend:
+        # 대조군: 진짜 trend 입력을 개입 없이 통과시킨 결과.
+        # 조정된 base 출력이 "개념 설치"인지 "저밀도 영역의 정형화된 출력"인지
+        # 구분하려면 이 목표 분포가 반드시 있어야 한다.
+        runs = [("REF_trend_unsteered", dict(method="median", form="matrix",
+                                             scope="all", layers=[]))]
+        rels = [0.0]
+    elif args.arms == "paper":
         runs = [r for r in runs if r[0][0] in "ABC"]
     elif args.arms == "ours":
         runs = [r for r in runs if r[0][0] in "DEFGHI"]
@@ -310,4 +318,6 @@ if __name__ == "__main__":
                    help="예측 길이 override. 시간이 부족하면 32 로 줄인다")
     p.add_argument("--sample-count", type=int, default=None,
                    help="AR 샘플 수 override. 배치 크기에 비례해 시간이 든다")
+    p.add_argument("--reference-trend", action="store_true",
+                   help="trend 클래스를 개입 없이 통과시켜 목표 분포를 만든다")
     raise SystemExit(main(p.parse_args()))
