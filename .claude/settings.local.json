@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import sys, torch, pandas, numpy, einops, huggingface_hub; print\\('py', sys.version.split\\(\\)[0]\\); print\\('torch', torch.__version__\\)\")"
+    ]
+  }
+}

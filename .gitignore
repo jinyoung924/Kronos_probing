@@ -74,3 +74,11 @@ venv.bak/
 temp/
 tmp/
 .python-version
+
+
+# claude 보고용 데이터
+experiment/confirm_data
+
+# 로컬 실행 시의 산출물 (Colab 에서는 Drive / scratch 로 나간다)
+experiment/_out/
+experiment/_scratch/
