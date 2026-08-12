@@ -9,7 +9,9 @@
       "Bash(~/.venvs/kronos/bin/python -)",
       "Bash(~/.venvs/kronos/bin/pip install *)",
       "Bash(python3 -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['colab_control.py','experiment/code/kexp/synth.py','experiment/code/kexp/ldr.py','experiment/code/stages/stage1_dataset.py','experiment/code/stages/stage2_activations.py','experiment/code/stages/stage3_ldr.py']]; print\\('syntax OK'\\)\")",
-      "Bash(python3 -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['experiment/code/kexp/intervene.py','experiment/code/stages/stage5_intervene.py','experiment/code/stages/stage4_steering_vector.py']]; print\\('syntax OK'\\)\")"
+      "Bash(python3 -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['experiment/code/kexp/intervene.py','experiment/code/stages/stage5_intervene.py','experiment/code/stages/stage4_steering_vector.py']]; print\\('syntax OK'\\)\")",
+      "Bash(echo \"exit=$?\")",
+      "Bash(python3 -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['experiment/code/kexp/config.py','experiment/code/stages/stage2_activations.py','experiment/code/stages/stage5_intervene.py']]; print\\('syntax OK'\\)\")"
     ]
   }
 }

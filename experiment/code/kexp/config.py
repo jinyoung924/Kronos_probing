@@ -138,7 +138,7 @@ class SteerCfg:
     구간이 넓었다. 전체설계 Step 5 의 [0.1, 2.0] 이 이 증거에 더 부합한다.
     """
     methods: tuple = ("median", "mean", "lda")
-    lambdas_rel: tuple = (0.0, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0)
+    lambdas_rel: tuple = (0.0, 0.05, 0.1, 0.15, 0.25, 0.35, 0.5, 1.0)
     pred_len: int = 64
     sample_count: int = 5
     temperature: float = 1.0
@@ -159,6 +159,25 @@ class Config:
 
     def hash(self) -> str:
         blob = json.dumps(self.to_dict(), sort_keys=True).encode()
+        return hashlib.sha256(blob).hexdigest()[:12]
+
+    def hash_for(self, *sections: str) -> str:
+        """지정한 하위 설정만으로 해시를 만든다.
+
+        전체 해시를 재개 판정에 쓰면 안 된다. 예를 들어 Stage 5 의 lambda 격자를
+        바꿨을 뿐인데 Stage 2 활성화(39 GB, 9 분)가 통째로 무효화된다.
+        각 stage 는 자신의 산출물에 실제로 영향을 주는 절만 해싱해야 한다.
+        """
+        d = self.to_dict()
+        blob = json.dumps({k: d[k] for k in sections}, sort_keys=True).encode()
+        return hashlib.sha256(blob).hexdigest()[:12]
+
+    def activation_hash(self) -> str:
+        """Stage 2 활성화의 정체성 — 모델과 데이터, 저장 dtype 만 관여한다."""
+        d = self.to_dict()
+        blob = json.dumps({"model": d["model"], "data": d["data"],
+                           "store_dtype": d["probe"]["store_dtype"]},
+                          sort_keys=True).encode()
         return hashlib.sha256(blob).hexdigest()[:12]
 
 

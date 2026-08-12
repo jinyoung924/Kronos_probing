@@ -83,7 +83,7 @@ def main(args) -> int:
         if (out_root / "meta.json").exists() and not args.force:
             prev = A.read_meta(out_root)
             same = (prev.get("n") == len(x)
-                    and prev.get("config_hash") == cfg.hash()
+                    and prev.get("config_hash") == cfg.activation_hash()
                     and prev.get("data_fingerprint") == fp)
             if same:
                 print(f"  [{cls}] 동일 설정·동일 데이터의 산출물이 있다 (n={prev['n']}). 건너뛴다.")
@@ -99,7 +99,7 @@ def main(args) -> int:
         st["seconds"] = round(time.time() - t1, 1)
         st["model"] = args.model
         st["noise"] = args.noise
-        st["config_hash"] = cfg.hash()
+        st["config_hash"] = cfg.activation_hash()
         st["data_fingerprint"] = fp
         (out_root / "meta.json").write_text(json.dumps(st, indent=2, ensure_ascii=False))
         stats[cls] = st
