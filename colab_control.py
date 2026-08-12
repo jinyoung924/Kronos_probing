@@ -10,16 +10,47 @@
 #  아래 STAGE 값만 바꿔가며 재실행하면 된다.
 # ==========================================================================
 
-STAGE = 0            # 실행할 stage 번호. 리스트로 주면 순서대로 실행한다: [1, 2, 3]
-EXTRA_ARGS = ""      # 문자열이면 모든 stage 에, dict 면 stage 별로: {1: "--force"}
+CONTROL_VERSION = "v3-multistage"   # 실행 시 출력된다. 이 값이 안 보이면 옛 셀이다.
+
+# 실행할 stage. 아래 형태를 모두 받는다.
+#   3            단일
+#   [1, 2, 3]    순서대로
+#   "1,2,3"      문자열도 허용
+STAGE = 0
+
+# stage 인자. 문자열이면 모든 stage 에, dict 면 stage 별로 적용된다.
+#   ""                    인자 없음
+#   "--smoke"             전 stage 에 --smoke
+#   {1: "--force"}        stage 1 에만 --force
+EXTRA_ARGS = ""
+
 BRANCH = "master"
 REINSTALL_DEPS = False   # 의존성을 다시 설치하려면 True
 
 # --------------------------------------------------------------------------
 
+import ast
 import glob
 import os
 import subprocess
+
+
+def parse_stages(value):
+    """STAGE 를 정수 리스트로 정규화한다."""
+    if isinstance(value, str):
+        value = ast.literal_eval(value.strip()) if value.strip() else []
+    if isinstance(value, (int, float)):
+        value = [value]
+    stages = [int(s) for s in value]
+    if not stages:
+        raise ValueError("STAGE 가 비어 있다.")
+    return stages
+
+
+def args_for(stage, extra):
+    if isinstance(extra, dict):
+        return str(extra.get(stage, extra.get(str(stage), "")))
+    return str(extra or "")
 
 REPO_URL = "https://github.com/jinyoung924/Kronos_probing.git"
 REPO_DIR = "/content/Kronos_probing"
@@ -40,6 +71,14 @@ def sh(cmd, cwd=None, check=True):
         raise RuntimeError(f"실패 (exit {proc.returncode}): {cmd}")
     return proc.returncode
 
+
+# 0) 실행 계획 확인 ----------------------------------------------------------
+# 인자 오류로 긴 clone/설치를 낭비하지 않도록 가장 먼저 검사한다.
+STAGES = parse_stages(STAGE)
+print(f"[colab_control {CONTROL_VERSION}]")
+print(f"  실행할 stage: {STAGES}")
+for _s in STAGES:
+    print(f"    stage {_s}: python stage{_s}_*.py {args_for(_s, EXTRA_ARGS)}")
 
 # 1) Google Drive 마운트 -----------------------------------------------------
 from google.colab import drive  # noqa: E402
@@ -67,18 +106,19 @@ else:
 
 # 4) stage 실행 --------------------------------------------------------------
 env_prefix = f"KEXP_DRIVE={DRIVE_DIR} KEXP_SCRATCH={SCRATCH_DIR} PYTHONUNBUFFERED=1"
-stages = STAGE if isinstance(STAGE, (list, tuple)) else [STAGE]
 results = {}
 
-for stage in stages:
+for stage in STAGES:
     pattern = f"{REPO_DIR}/experiment/code/stages/stage{stage}_*.py"
     matches = sorted(glob.glob(pattern))
     if not matches:
-        raise FileNotFoundError(f"stage 스크립트를 찾을 수 없다: {pattern}")
+        raise FileNotFoundError(
+            f"stage 스크립트를 찾을 수 없다: {pattern}\n"
+            f"저장소에 해당 stage 가 아직 푸시되지 않았을 수 있다.")
     if len(matches) > 1:
         raise RuntimeError(f"stage {stage} 에 해당하는 스크립트가 여러 개다: {matches}")
     script = matches[0]
-    extra = EXTRA_ARGS.get(stage, "") if isinstance(EXTRA_ARGS, dict) else EXTRA_ARGS
+    extra = args_for(stage, EXTRA_ARGS)
 
     print(f"\n{'=' * 70}\n실행: {os.path.basename(script)} {extra}\n{'=' * 70}")
     rc = sh(f"{env_prefix} python {script} {extra}", cwd=REPO_DIR, check=False)
