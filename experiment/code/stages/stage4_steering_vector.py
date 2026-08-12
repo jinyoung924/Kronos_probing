@@ -143,8 +143,13 @@ def main(args) -> int:
 
     S = {(m, r): np.zeros((L, D), dtype=np.float32)
          for m in ("median", "mean") for r in SV.REGIONS}
+    # 논문(5쪽)의 S_i 는 R^{N x D} 행렬이다. 토큰 위치마다 다른 벡터를 더한다.
+    # 위의 [D] 벡터들은 명세 7절이 AR 생성의 신규 토큰에 쓰려고 축약한 형태이며,
+    # Stage 5 에서 두 형태를 모두 시험한다.
+    S_mat = {m: np.zeros((L, T, D), dtype=np.float16) for m in ("median", "mean")}
     S_lda = np.zeros((L, D), dtype=np.float32)
     diff_norm_by_token = np.zeros((L, T))
+    h_token_l2 = np.zeros((L, T))
     h_l2 = np.zeros(L)
 
     for i in range(L):
@@ -156,7 +161,12 @@ def main(args) -> int:
         vecs, diffs = SV.build_vectors(st, peaks[i])
         for key, v in vecs.items():
             S[key][i] = v
+        for m in ("median", "mean"):
+            S_mat[m][i] = diffs[m].astype(np.float16)
         diff_norm_by_token[i] = np.linalg.norm(diffs["median"], axis=-1)
+        # 행렬 형태의 lambda 캘리브레이션에는 위치별 ||h|| 가 필요하다
+        sample = np.asarray(A.load_layer(act_dir / "base", i)[:64], dtype=np.float32)
+        h_token_l2[i] = np.linalg.norm(sample, axis=-1).mean(axis=0)
         # LDA 방향은 스케일이 임의라 median 벡터와 같은 노름으로 맞춘다
         S_lda[i] = SV.scale_like(w_last[i], S[("median", "late")][i])
         h_l2[i] = SV.activation_l2(A.load_layer(act_dir / "base", i))
@@ -230,8 +240,9 @@ def main(args) -> int:
         res_dir / "steering.npz",
         S_lda=S_lda, h_norm_l2=h_l2, ldr_late=ldr_late,
         peaks=np.array(peaks), cos_layer=cos_layer,
-        diff_norm_by_token=diff_norm_by_token,
+        diff_norm_by_token=diff_norm_by_token, h_token_l2=h_token_l2,
         ood_ratio=ood_ratio, ood_reached=ood_reached, lambdas_rel=rels,
+        S_matrix_median=S_mat["median"], S_matrix_mean=S_mat["mean"],
         **{f"S_{m}_{r}": v for (m, r), v in S.items()},
         **{f"snorm_{m}_{r}": v for (m, r), v in s_norm.items()})
 
