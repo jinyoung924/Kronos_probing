@@ -203,6 +203,23 @@ def main(args) -> int:
     # 다시 실행하면 이미 끝난 조합은 건너뛴다.
     out_file = out_dir / ("results_smoke.json" if args.smoke else "results.json")
     results = json.loads(out_file.read_text()) if out_file.exists() and not args.force else {}
+    # 실행 조건(표본 수/예측 길이/샘플 수)이 다른 항목은 비교가 불가능하므로 버린다.
+    # 예전 스모크 결과가 같은 파일에 섞여 들어가 본 실행이 건너뛰어지는 사고를 막는다.
+    want = {"n_eval": n_eval, "pred_len": pred_len, "sample_count": sample_count}
+
+    def matches(v: dict) -> bool:
+        rs = v.get("run_settings")
+        if rs is not None:
+            return rs == want
+        # run_settings 기록 이전에 만들어진 항목은 표본 수로 판별한다.
+        # (스모크는 n_eval 이 작아 slopes 길이가 다르다)
+        return len(v.get("slopes", [])) == n_eval
+
+    stale = [k for k, v in results.items() if not matches(v)]
+    for k in stale:
+        del results[k]
+    if stale:
+        print(f"  실행 조건이 다른 기존 항목 {len(stale)}개를 버린다: {sorted(stale)[:6]}...")
     if results:
         print(f"  기존 결과 {len(results)}개를 이어받는다 ({out_file})")
     baseline_metrics = None
@@ -257,6 +274,8 @@ def main(args) -> int:
                 m = evaluate(preds, x_mean, x_std)
             m["lambda_rel"] = rel
             m["readout_shift_sigma"] = shift
+            m["run_settings"] = {"n_eval": n_eval, "pred_len": pred_len,
+                                 "sample_count": sample_count}
             m["config"] = {k: (v if k != "layers" else list(v)) for k, v in c.items()}
             m["seconds"] = round(time.time() - t1, 1)
             results[key] = m
