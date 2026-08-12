@@ -126,8 +126,19 @@ class ProbeCfg:
 
 @dataclass(frozen=True)
 class SteerCfg:
+    """명세 7절.
+
+    lambda 를 절대값이 아니라 상대 강도로 둔다.
+        lambda_rel = lambda_i * ||S_i|| / ||h_i||
+    Kronos-base 는 활성화 노름이 레이어별로 6.6 -> 47.0 까지 변하므로,
+    동일한 절대 lambda 를 전 레이어에 적용하면 개입 세기가 7 배 달라진다.
+
+    범위는 명세 7절의 [0.05, 0.5] 보다 넓게 잡는다. 로컬 실측 결과 Kronos 의
+    이산 토큰 병목이 둔감해서, 약한 개입은 샘플링 토큰을 전혀 바꾸지 못하는
+    구간이 넓었다. 전체설계 Step 5 의 [0.1, 2.0] 이 이 증거에 더 부합한다.
+    """
     methods: tuple = ("median", "mean", "lda")
-    lambdas: tuple = (0.0, 0.05, 0.1, 0.2, 0.3, 0.5)
+    lambdas_rel: tuple = (0.0, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0)
     pred_len: int = 64
     sample_count: int = 5
     temperature: float = 1.0

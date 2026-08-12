@@ -130,6 +130,79 @@ def plot_pca(act_dir_b: Path, act_dir_s: Path, coords: list, out: Path, title: s
     plt.close(fig)
 
 
+def plot_lda_view(act_b: Path, act_s: Path, coords: list, idx_tr, idx_te,
+                  rel_eps: float, device, out: Path, title: str) -> dict:
+    """LDR 이 재는 분리를 직접 본다 — LDA 방향 1차원 투영.
+
+    PCA 는 레이블을 보지 않고 전체 분산이 큰 방향을 찾는 반면, LDA 는
+    클래스 내 분산으로 백색화한 뒤 평균차 방향을 찾는다. 832 차원에서
+    공분산이 비등방적이면 두 방향은 거의 무관해질 수 있다. 따라서
+    "LDR 은 높은데 PCA 산점도에서 안 갈라진다" 는 모순이 아니다.
+
+    이 그림은 그 점을 직접 확인한다.
+      상단: 학습 분할로 구한 LDA 방향에 held-out 표본을 투영한 히스토그램
+      하단: 누적 설명분산, LDA 방향이 상위 k 개 PC 부분공간에 담긴 비율,
+            그리고 PC1 축과 LDA 축의 산점도 비교
+    """
+    from sklearn.decomposition import PCA
+
+    n_c = len(coords)
+    fig, axes = plt.subplots(2, n_c, figsize=(6 * n_c, 10))
+    info = {}
+
+    for j, (layer, tok, label) in enumerate(coords):
+        a = np.asarray(A.load_layer(act_b, layer)[:, tok, :], dtype=np.float32)
+        b = np.asarray(A.load_layer(act_s, layer)[:, tok, :], dtype=np.float32)
+
+        # 학습 분할로만 방향을 구하고 held-out 에 투영한다
+        ta = torch.from_numpy(a[idx_tr]).to(device).unsqueeze(1)
+        tb = torch.from_numpy(b[idx_tr]).to(device).unsqueeze(1)
+        w = LD.fisher_directions(ta, tb, rel_eps)[0].cpu().numpy()
+        w = w / (np.linalg.norm(w) + 1e-12)
+
+        pa, pb = a[idx_te] @ w, b[idx_te] @ w
+        ldr = (pb.mean() - pa.mean()) ** 2 / (pa.var() + pb.var() + 1e-12)
+
+        ax = axes[0, j]
+        bins = np.histogram_bin_edges(np.concatenate([pa, pb]), bins=60)
+        ax.hist(pa, bins=bins, alpha=0.6, color=BLUE, label="base")
+        ax.hist(pb, bins=bins, alpha=0.6, color=RED, label="trend")
+        ax.set_title(f"{label}\nlayer {layer}, token {tok}  |  held-out LDR = {ldr:.1f}")
+        ax.set_xlabel("projection onto LDA direction"); ax.legend(fontsize=9)
+
+        # PCA 와의 관계
+        X = np.vstack([a, b])
+        k_max = min(64, X.shape[1], X.shape[0] - 1)
+        pca = PCA(n_components=k_max).fit(X)
+        cum = np.cumsum(pca.explained_variance_ratio_)
+        energy = np.cumsum((pca.components_ @ w) ** 2)   # w 는 단위벡터
+
+        ax2 = axes[1, j]
+        ax2.plot(np.arange(1, k_max + 1), cum, "-", color="tab:green",
+                 label="cumulative explained variance")
+        ax2.plot(np.arange(1, k_max + 1), energy, "-", color="tab:purple",
+                 label="fraction of LDA direction in top-k PCs")
+        ax2.axvline(2, color="k", ls=":", lw=1)
+        ax2.set_xscale("log"); ax2.set_ylim(0, 1.02)
+        ax2.set_xlabel("number of principal components k")
+        ax2.set_title(f"top-2 PCs hold {cum[1]:.1%} of variance\n"
+                      f"but only {energy[1]:.2%} of the LDA direction")
+        ax2.legend(fontsize=8); ax2.grid(alpha=0.3)
+
+        info[label] = {
+            "layer": int(layer), "token": int(tok), "heldout_ldr": float(ldr),
+            "var_top2": float(cum[1]), "lda_energy_top2": float(energy[1]),
+            "lda_energy_top16": float(energy[min(15, k_max - 1)]),
+            "cos_lda_pc1": float(abs(pca.components_[0] @ w)),
+        }
+
+    fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(out, dpi=140)
+    plt.close(fig)
+    return info
+
+
 def main(args) -> int:
     t0 = time.time()
     cfg = dataclasses.replace(CFG, model=resolve_model(args.model, CFG.model.max_context))
@@ -251,19 +324,32 @@ def main(args) -> int:
         idx_train=idx_tr, idx_test=idx_te, **res)
 
     tag = f"{args.noise}_{args.model}" + ("_smoke" if args.smoke else "")
+    coords = [(int(last_tok_best_layer), T - 1, "best layer @ last token"),
+              (0, T - 1, "layer 0 @ last token"),
+              (int(best_layer), int(best_tok), "global max")]
+
     f1 = fig_dir / f"stage3_{tag}_heatmap.png"
     f2 = fig_dir / f"stage3_{tag}_profiles.png"
     f3 = fig_dir / f"stage3_{tag}_pca.png"
+    f4 = fig_dir / f"stage3_{tag}_lda.png"
     plot_heatmap(scaled, LD.minmax(tokenmean["test"]), f1,
                  f"Scaled LDR: linear increasing momentum [{args.noise}, {args.model}]")
     plot_profiles(res, f2, f"LDR profiles [{args.noise}, {args.model}]")
-    plot_pca(act_base, act_trend,
-             [(int(last_tok_best_layer), T - 1, "best layer @ last token"),
-              (0, T - 1, "layer 0 @ last token"),
-              (int(best_layer), int(best_tok), "global max")],
-             f3, f"Latent geometry before intervention [{args.noise}, {args.model}]")
-    for f in (f1, f2, f3):
+    plot_pca(act_base, act_trend, coords, f3,
+             f"Latent geometry before intervention [{args.noise}, {args.model}]")
+    lda_info = plot_lda_view(act_base, act_trend, coords, idx_tr, idx_te,
+                             cfg.probe.shrinkage, device, f4,
+                             f"LDA view: what the LDR actually measures "
+                             f"[{args.noise}, {args.model}]")
+    for f in (f1, f2, f3, f4):
         print(f"  {f}")
+
+    print("\n  PCA 가 판별 방향을 보여주지 못하는 정도")
+    print(f"  {'좌표':28s} {'held-out LDR':>13} {'상위2 PC 분산':>14} "
+          f"{'그 안의 LDA 방향':>17} {'|cos(LDA,PC1)|':>15}")
+    for label, d in lda_info.items():
+        print(f"  {label:28s} {d['heldout_ldr']:>13.2f} {d['var_top2']:>13.1%} "
+              f"{d['lda_energy_top2']:>16.2%} {d['cos_lda_pc1']:>15.4f}")
 
     summary = {
         "model": args.model, "noise": args.noise, "L": L, "N": N, "T": T, "D": D,
@@ -278,6 +364,7 @@ def main(args) -> int:
         "max_train_test_ratio": max_overfit,
         "train_over_dmodel": len(idx_tr) / D,
         "h_norm_by_layer": h_norm.tolist(),
+        "lda_vs_pca": lda_info,
         "pass": bool(ok),
     }
     (res_dir / "stage3_summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False))
