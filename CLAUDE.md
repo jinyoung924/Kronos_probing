@@ -28,28 +28,67 @@ TSFM인 **Kronos**에 **Moment Steering 논문**의 표현 분석·개입 방법
 
 ## 2. 지금 어디까지 왔는가
 
-| Stage | 상태 | 산출물 |
+| Stage | OU (주 데이터셋) | RW (robustness) |
 |---|---|---|
-| 0 환경·스펙 실측 | 완료 | 모델 3종 스펙 확정, Kronos-base 채택 |
-| 1 합성 데이터셋 | 완료 | OU/RW 각 2048×2 표본, Drive |
-| 2 활성화 추출 | 완료 | `[12, 2048, 512, 832]` fp16 ×2 클래스, **scratch(39GB, 세션 종료 시 소멸)** |
-| 3 Fisher probe / LDR | 완료 | LDR 히트맵·프로파일·PCA·LDA 뷰, `ldr.npz`, `class_stats_layer*.npz` |
-| 4 Steering vector | 완료 | `steering.npz`, OOD 진단, `pca_subset.npz`(36MB, Stage 6용) |
-| **5 개입 추론** | **실행 중** | 72조합 중 일부. L4 GPU에서 재개, `steer/results.json`에 증분 저장 |
-| 6 평가·시각화 | **미작성** | slope vs λ 곡선, 붕괴 지표, 개입 전/후 PCA |
+| 0 환경·스펙 실측 | 완료 — Kronos-base 채택 | — |
+| 1 합성 데이터셋 | 완료 | 완료 |
+| 2 활성화 추출 | 완료 | 완료 (**scratch, 세션 종료 시 소멸**) |
+| 3 Fisher probe / LDR | 완료 | 완료 |
+| 4 Steering vector | 완료 | 완료 |
+| 5 개입 추론 | **완료** — 9팔 × 8λ = 72조합 + REF | **REF만 완료.** 개입 팔 미실행 |
+| 6 평가·시각화 | **완료** | 미실행 |
 
-### Stage 4까지의 핵심 결론
+**다음 할 일은 RW 개입 팔이다** (6절 참조).
 
-1. **개념은 선형 표현으로 존재한다.** held-out LDR 23.76 vs null(레이블 셔플) 0.024 → **987배**
-2. **causal accumulation 정상.** 첫 토큰이 전 레이어에서 최저(5.6~6.4)
-3. **명세의 causal frontier 가설은 반증됨.** LDR 정점이 t≈259~350이고 마지막 토큰이 전역 최대가 아니다. 단 깊이에 따른 국소화는 관측됨(layer 4→11에서 마지막 토큰 LDR 17.83→23.52 단조 증가)
-4. **PCA로는 이 개념을 볼 수 없다.** 상위 2 PC가 분산의 48~80%를 담지만 LDA 방향은 그 안에 **0.01%**
+### 재현된 결론 (OU·RW 양쪽)
 
-### Stage 5 예비 결과 (A/B 팔 일부)
+이 넷은 두 데이터셋에서 모두 확인됐다. 가장 신뢰할 수 있는 결과다.
 
-양의 기울기 비율이 λ_rel 0→1에서 **59.4% → 100%** 로 단조 증가. λ≥0.35에서 포화. coherence 위반 0%(붕괴 없음). `slope_std`가 22배 감소 — 개입이 예측을 거의 결정론적으로 만든다(예상 밖 현상, Stage 6에서 다룰 것).
+1. **개념은 선형 표현으로 존재한다.** held-out LDR vs null(레이블 셔플) 비율 — OU **987배**, RW **632배**
+2. **PCA로는 이 개념을 볼 수 없다.** 상위 2 PC가 분산의 48~80%를 담지만 LDA 방향은 그 안에 **0.01~0.02%**
+3. **mean ≈ median** (코사인 0.978 / 0.986). 논문의 절제 실험 1이 예측한 대로.
+4. **LDA 방향 ⊥ 평균차 방향** (코사인 0.040 / 0.022). LDA 는 논문 방법의 변종이 아니라 다른 개입이다.
+5. **layer 0 은 OOD 에 취약하다.** BSQ 이산 임베딩 격자라 연속 섭동이 갈 곳이 없다.
 
-별도 스모크에서 **G(LDA 방향, 개념축 이동량 정합)가 출력을 전혀 바꾸지 못했다.** 유지되면 "탐침이 개념을 **읽는** 방향 ≠ 모델이 **쓰는** 방향"이라는 결과가 된다.
+### 데이터셋에 따라 갈리는 결론 — 주의할 것
+
+**명세 6절의 causal frontier 가설은 데이터 형태에 의존한다.**
+
+| | OU (매끈한 램프) | RW (랜덤워크+drift) |
+|---|---|---|
+| LDR 정점 | t ≈ 259~350 | **t = 511** |
+| `causal_frontier_holds` | False | **True** |
+
+RW 에서는 성립한다. OU 의 trend 는 거의 결정론적 램프라 어느 구간만 봐도 탐지되고, 시퀀스 전체 z-score 가 램프를 중앙정렬시켜 정보가 양 끝에 대칭으로 실린다. **OU 단독으로 가설을 반증했다고 결론지으면 안 된다.**
+
+### Stage 5/6 결과 (OU)
+
+- **논문 방법이 작동한다.** A/B/C 모두 λ_rel=0.25 에서 **32/32 양의 기울기** (p=4.7e-10), coherence 위반 0%.
+- **작동 방식은 "덧셈"이 아니라 "덮어쓰기"다.** 기준선 std 0.023 → 개입 후 0.001 (26배 붕괴). 원래 상승하던 표본까지 끌어내려 전부 작은 양수로 수렴시킨다.
+- **single-token 이 all-tokens 와 동등하다 — 논문과 반대.** 논문은 인코더에서 single-token 실패를 보고했으나, decoder-only 는 마지막 토큰이 곧 출력 경로라 동일하게 작동한다.
+- **얕은 층 개입은 역방향으로 조정한다.** F(layer {1,2})는 λ=0.35 에서 **0/32** (p=4.7e-10). 그런데 layer 1 은 전역 LDR 최대(29.27) 지점이다.
+- **LDA 방향은 무력하다.** G(읽기량 정합) 분산비 0.951 로 모델을 거의 건드리지 못한다. H(동일 노름, 읽기량 26배)도 모멘텀 방향으로는 못 민다.
+- **`I_ctrl_median_vector`(명세 7절의 vector 축약형)가 가장 빠르다.** λ=0.05 에서 이미 65.6%. 대조군으로 넣었는데 최고 성능이었다.
+- **행동이 표현 도달보다 먼저 포화한다.** λ=0.25 는 표현을 두 클래스 사이 골짜기(간격의 54%)에 놓는데 행동은 거기서 이미 100%. λ=0.5 에서 표현이 trend 평균에 도착해도 행동은 나아지지 않고 OOD 만 악화된다.
+
+### 인과 해석에 대한 유보 — 가장 중요한 미해결 쟁점
+
+목표 분포 대조군(진짜 trend 입력을 개입 없이 통과)을 돌린 결과:
+
+| | slope | close_drift | 양수 |
+|---|---|---|---|
+| OU REF (trend 입력) | −0.0656 | −3.11 | **0/32** |
+| RW REF (trend 입력) | −0.0113 | −0.71 | 53.1% |
+| 기준선 (base 입력) | −0.0011 | +0.05 | 46.9% |
+| 조정된 base (OU, λ=0.25) | +0.0038 | +0.86 | **100%** |
+
+- OU 의 극적 반전(0/32)은 **매끈한 램프가 OOD 였던 인공물**이다. RW 에서는 사라진다.
+- 그러나 RW 에서도 모델은 진짜 추세 입력에 **중립**(53.1%)이다. **모델은 모멘텀을 외삽하지 않는다.**
+- KS 검정: 조정된 출력이 목표 분포와 닮은 (팔, λ) 조합이 **하나도 없다** (모두 p ≈ 1e-18).
+
+**따라서 "steering 이 작동하면 → 모델이 그 개념을 기저 기작으로 쓴다"는 추론이 성립하지 않는다.** 개입은 모델이 자연적으로 하지 않는 행동을 주입한다. 분산 26배 붕괴 + 골짜기 착지와 합치면, **저밀도 영역에서의 정형화된 출력**이라는 해석과 일관된다.
+
+단, RW 개입 팔이 아직 없어 이 결론은 OU 기준이다. RW 에서 steering 이 재현되는지가 확정의 관건이다.
 
 ---
 
@@ -68,7 +107,7 @@ experiment/code/
     ldr.py                       Stage 3 closed-form Fisher/LDA, 평활, 구간 통계
     steering_vec.py              Stage 4 S_i 구성, λ 캘리브레이션, OOD 진단
     intervene.py                 Stage 5 Steerer 훅 (위치 정합 포함)
-  stages/stage{0..5}_*.py        독립 실행 엔트리포인트
+  stages/stage{0..6}_*.py        독립 실행 엔트리포인트
 ```
 
 **패키지 이름이 `kexp`인 이유**: `experiment/code`를 `sys.path`에 올리므로 하위 패키지가 `model`이면 Kronos의 `model` 패키지와 충돌한다. `code`도 표준 라이브러리 모듈명이라 최상위 노출 금지.
@@ -83,6 +122,24 @@ stage3  --model --noise --chunk --smoke --no-class-stats
 stage4  --model --noise --smoke --ood-n --ood-threshold --pca-n
 stage5  --model --noise --n-eval --seed --smoke --smoke-n
         --arms {all,paper,ours} --force --pred-len --sample-count
+        --reference-trend        trend 클래스를 개입 없이 통과 (목표 분포)
+stage6  --model --noise
+```
+
+`--reference-trend` 는 `--arms` 를 덮어쓴다. 목표 분포는 REF 팔 하나만 돌린다.
+
+### 산출물 파일
+
+```
+Drive results/<tag>/<noise>_<model>/
+  ldr.npz                  Stage 3: LDR, w_last, h_norm
+  class_stats_layer{i}.npz Stage 3: 위치별 median/mean (Stage 4 입력)
+  stage3_summary.json      Stage 3: 구간별 LDR, 정점 위치, LDA vs PCA
+  steering.npz             Stage 4: S 벡터/행렬, OOD, lambda 표
+  stage4_summary.json      Stage 4: 노름, 코사인, OOD
+  pca_subset.npz           Stage 4: 활성화 부분집합 (Stage 6 기하 검증용, 36MB)
+  steer/results.json       Stage 5: 조합별 지표 + slopes (증분 저장)
+  stage6_summary.json/.csv Stage 6: 팔별 판정
 ```
 
 ### 저장 위치 규칙
@@ -153,6 +210,8 @@ torch(CPU/MPS), numpy, pandas, scipy, matplotlib, scikit-learn, pypdf 설치됨.
 | coherence 위반 96.88% (개입 없는 기준선에서) | 정규화 공간에서 검사. Kronos는 O/H/L/C를 **채널별 독립** z-score | 역정규화 후 검사 |
 | 위치별 argmax가 노이즈 스파이크를 고름 | 512개 위치에서 raw argmax | 25점 이동평균 + 구간(early/mid/late/last) 평균 |
 | steering 훅 테스트가 "효과 없음"으로 나옴 | recorder 훅을 Steerer보다 **먼저** 등록해 수정 전 출력을 캡처 | 테스트 시 훅 등록 순서 주의 |
+| Stage 6 이 "모든 팔 효과 없음"으로 오판 | 기준선과의 **대응표본 평균 비교**를 주 검정으로 썼다. 이 개입은 평균을 옮기는 게 아니라 분포를 붕괴시키므로 쌍별 차이가 17/32 로 갈린다 | 주 검정을 **결과 부호의 이항검정**으로 교체 (32/32, p=5e-10) |
+| 목표 분포 없이 인과 결론을 낼 뻔함 | "steering 이 작동한다"만으로는 개념 설치인지 저밀도 영역의 정형화인지 구분 불가 | `--reference-trend` 대조군 추가 |
 
 ### 수치·해석상 주의
 
@@ -166,13 +225,32 @@ torch(CPU/MPS), numpy, pandas, scipy, matplotlib, scikit-learn, pypdf 설치됨.
 
 ## 6. 다음 할 일
 
-1. **Stage 5 완료 대기.** L4에서 재개 중. 증분 저장·이어받기가 되므로 중단/재시작 자유.
-2. **Stage 6 작성** (미착수). 설계 Step 5 기준:
-   - slope vs λ 곡선 (팔별)
-   - 붕괴 지표 (coherence 위반, 예측 변동성, `slope_std` 감소 현상)
-   - **개입 전/후 PCA 이동** — `pca_subset.npz`(Drive)를 쓰면 활성화 39GB 없이 가능. 개입 전 데이터로 fit하고 개입 후를 transform할 것
-   - 논문 재현 팔(A/B/C) vs 데이터 기반 개선안(D~G) 비교표
-3. **미검증 항목**: RW(랜덤워크) 데이터셋으로 Stage 2 이후 robustness 실행. Stage 1은 이미 생성돼 Drive에 있다.
+### 1순위 — RW 개입 팔 (미실행)
+
+핵심 미해결 질문: **OU 에서 관측된 "steering 100% 상승"이 RW 에서도 재현되는가?**
+
+- 재현되면 → 데이터 형태와 무관한 모델 성질. "모델이 자연적으로 안 하는 행동을 주입한다"는 결론이 확정된다.
+- 재현 안 되면 → OU 의 steering 효과가 그 인공물에 묶여 있었다는 뜻. 결론을 대폭 수정해야 한다.
+
+논문 재현 팔부터 (A/B/C = 22조합, L4 에서 약 35분):
+
+```python
+STAGE = [5, 6]
+EXTRA_ARGS = {5: "--noise rw --arms paper", 6: "--noise rw"}
+```
+
+REF 는 이미 RW 결과 파일에 있으므로 Stage 6 이 KS 비교까지 바로 낸다.
+활성화 39GB 는 필요 없다 (Stage 5·6 은 Drive 만 읽는다).
+
+**참고**: RW 는 OU 보다 안전 λ 범위가 좁다. 레이어별 OOD 임계 이하 최대 λ_rel 이
+`[0.05, 0.1, 0.15, 0.25, 0.25, 0.25, 0.25, 0.25, 0.15, 0.15, 0.15, 0.15]` 이고
+`‖S‖/‖h‖` 도 0.66~0.78 로 OU(0.44~0.60)보다 크다. λ=0.15~0.25 구간이 관건일 가능성이 높다.
+
+### 2순위
+
+- RW 개선안 팔 (`--arms ours`) — 1순위 결과를 보고 판단
+- 중간보고서(`experiment/0812_1차실험_중간보고_stage0-4.md`)를 Stage 5/6 및 RW 결과까지 반영해 확장. 현재 제목은 stage0-4 이고 §6 이 "실행 중"으로 남아 있다.
+- OU 의 trend 클래스가 OOD 였다는 점을 고려하면, snr 을 낮춘 더 현실적인 OU 변형도 후보다.
 
 ---
 
