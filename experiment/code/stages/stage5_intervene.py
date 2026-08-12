@@ -129,8 +129,8 @@ def main(args) -> int:
 
     section("1. 설정")
     n_eval = args.smoke_n if args.smoke else args.n_eval
-    pred_len = 8 if args.smoke else cfg.steer.pred_len
-    sample_count = 1 if args.smoke else cfg.steer.sample_count
+    pred_len = 8 if args.smoke else (args.pred_len or cfg.steer.pred_len)
+    sample_count = 1 if args.smoke else (args.sample_count or cfg.steer.sample_count)
     cfg = dataclasses.replace(cfg, steer=dataclasses.replace(
         cfg.steer, pred_len=pred_len, sample_count=sample_count))
     rels = [r for r in cfg.steer.lambdas_rel] if not args.smoke else [0.0, 0.25]
@@ -177,8 +177,12 @@ def main(args) -> int:
         ("H_ctrl_lda_equalnorm",        dict(method="lda", form="vector", scope="all", layers=no_l0, lda_scale="equal")),
         ("I_ctrl_median_vector",        dict(method="median", form="vector", scope="all", layers=no_l0)),
     ]
+    if args.arms == "paper":
+        runs = [r for r in runs if r[0][0] in "ABC"]
+    elif args.arms == "ours":
+        runs = [r for r in runs if r[0][0] in "DEFGHI"]
     if args.smoke:
-        runs = [runs[0], runs[3], runs[6]]
+        runs = [r for r in runs if r[0][0] in "ADG"] or runs[:3]
     for name, c in runs:
         ls = c["layers"]
         print(f"  {name:28s} {c['method']:>6} {c['form']:>7} {c['scope']:>6} "
@@ -195,13 +199,23 @@ def main(args) -> int:
           f"-> matched 스케일은 변위가 약 {1/np.median(cos_lda):.0f}배 작다")
 
     section("4. 실행")
-    results = {}
+    # 1~3 시간짜리 실행이라 중간에 세션이 끊길 수 있다. 매 조합마다 저장하고,
+    # 다시 실행하면 이미 끝난 조합은 건너뛴다.
+    out_file = out_dir / ("results_smoke.json" if args.smoke else "results.json")
+    results = json.loads(out_file.read_text()) if out_file.exists() and not args.force else {}
+    if results:
+        print(f"  기존 결과 {len(results)}개를 이어받는다 ({out_file})")
     baseline_metrics = None
+    n_todo = sum(1 for n, _ in runs for r in rels if f"{n}|{r}" not in results)
+    print(f"  실행할 조합 {n_todo}개")
+    done = 0
     print(f"  {'run':28s} {'lam_rel':>8} {'개념축이동':>10} {'slope_mean':>11} "
           f"{'slope_std':>10} {'>0 비율':>8} {'coh 위반':>9} {'sec':>6}")
     for name, c in runs:
         for rel in rels:
             key = f"{name}|{rel}"
+            if key in results:
+                continue
             t1 = time.time()
             if rel == 0.0:
                 if baseline_metrics is None:
@@ -246,13 +260,17 @@ def main(args) -> int:
             m["config"] = {k: (v if k != "layers" else list(v)) for k, v in c.items()}
             m["seconds"] = round(time.time() - t1, 1)
             results[key] = m
+            out_file.write_text(json.dumps(results, indent=2, ensure_ascii=False))
+            done += 1
+            eta = (time.time() - t0) / done * (n_todo - done)
             print(f"  {name:28s} {rel:>8.2f} {shift:>10.3f} {m['slope_mean']:>11.5f} "
                   f"{m['slope_std']:>10.5f} {m['frac_positive']:>8.1%} "
-                  f"{m['coherence_violation']:>9.2%} {m['seconds']:>6.1f}")
+                  f"{m['coherence_violation']:>9.2%} {m['seconds']:>6.1f}"
+                  f"  ETA {eta/60:.0f}m")
 
     section("5. 저장")
-    (out_dir / "results.json").write_text(json.dumps(results, indent=2, ensure_ascii=False))
-    print(f"  {out_dir / 'results.json'}")
+    out_file.write_text(json.dumps(results, indent=2, ensure_ascii=False))
+    print(f"  {out_file}  ({len(results)}개 조합)")
     print(f"  총 소요: {time.time() - t0:.1f}s")
     print("\n  다음: stage6 에서 slope vs lambda 곡선, 붕괴 지표, PCA 이동을 시각화한다.")
     return 0
@@ -266,4 +284,11 @@ if __name__ == "__main__":
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--smoke", action="store_true")
     p.add_argument("--smoke-n", type=int, default=4)
+    p.add_argument("--arms", default="all", choices=["all", "paper", "ours"],
+                   help="paper=A~C(논문 재현), ours=D~I(개선안+대조군)")
+    p.add_argument("--force", action="store_true", help="기존 결과를 무시하고 처음부터")
+    p.add_argument("--pred-len", type=int, default=None,
+                   help="예측 길이 override. 시간이 부족하면 32 로 줄인다")
+    p.add_argument("--sample-count", type=int, default=None,
+                   help="AR 샘플 수 override. 배치 크기에 비례해 시간이 든다")
     raise SystemExit(main(p.parse_args()))
