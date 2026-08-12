@@ -235,7 +235,27 @@ def main(args) -> int:
     print(f"\n  비율 {args.ood_threshold} 이하를 유지하는 최대 lambda_rel (레이어별): {safe}")
     print(f"  -> Stage 5 의 lambda 격자는 이 범위를 넘는 지점에서 붕괴가 예상된다.")
 
-    section("6. 저장 및 그림")
+    section("6. Stage 6 용 활성화 부분집합 저장")
+    # 활성화 39 GB 는 Colab 로컬 scratch 에 있어 세션이 끝나면 사라진다.
+    # Stage 6 의 개입 전/후 PCA 비교(설계 Step 5)에는 원시 활성화가 필요하므로,
+    # 관심 좌표만 잘라 Drive 에 남긴다. 이렇게 두면 나중에 Stage 2 를 9 분
+    # 다시 돌릴 필요가 없다.
+    peak_tok = int(np.median(peaks))
+    toks = [T - 1, peak_tok]
+    n_sub = min(args.pca_n, summ["N"] if "N" in summ else args.pca_n)
+    sub = np.zeros((2, L, len(toks), n_sub, D), dtype=np.float16)
+    for ci, cls in enumerate(("base", "trend")):
+        for i in range(L):
+            arr = A.load_layer(act_dir / cls, i)
+            for ti, tk in enumerate(toks):
+                sub[ci, i, ti] = arr[:n_sub, tk, :]
+    np.savez_compressed(res_dir / "pca_subset.npz", act=sub, tokens=np.array(toks),
+                        classes=np.array(["base", "trend"]))
+    mb = (res_dir / "pca_subset.npz").stat().st_size / 1024**2
+    print(f"  좌표: 토큰 {toks} (마지막, 평활 정점 중앙값), 표본 {n_sub}/클래스")
+    print(f"  {res_dir / 'pca_subset.npz'}  ({mb:.1f} MB)")
+
+    section("7. 저장 및 그림")
     np.savez_compressed(
         res_dir / "steering.npz",
         S_lda=S_lda, h_norm_l2=h_l2, ldr_late=ldr_late,
@@ -283,4 +303,6 @@ if __name__ == "__main__":
                    help="OOD 진단에 쓸 표본 수 (레이어·클래스당)")
     p.add_argument("--ood-threshold", type=float, default=2.0,
                    help="최근접 거리 비율이 이 값을 넘으면 다양체 밖으로 본다")
+    p.add_argument("--pca-n", type=int, default=512,
+                   help="Stage 6 PCA 용으로 Drive 에 남길 표본 수 (클래스당)")
     raise SystemExit(main(p.parse_args()))
