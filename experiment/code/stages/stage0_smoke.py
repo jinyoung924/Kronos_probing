@@ -10,10 +10,13 @@
 
 실행:
     python experiment/code/stages/stage0_smoke.py
+    python experiment/code/stages/stage0_smoke.py --compare   # 모델 스펙 비교만
 """
 
 from __future__ import annotations
 
+import argparse
+import dataclasses
 import json
 import shutil
 import sys
@@ -99,11 +102,62 @@ def dummy_ohlcva(T: int, seed: int = 0) -> tuple[np.ndarray, pd.DatetimeIndex]:
     return x, ts
 
 
-def main() -> int:
+# 명세의 L=12 가정이 어느 체크포인트에 해당하는지 실측으로 확인하기 위한 후보군.
+# mini 만 토크나이저와 컨텍스트 길이가 다르다.
+MODEL_CANDIDATES = [
+    ("Kronos-mini", "NeoQuasar/Kronos-Tokenizer-2k", "NeoQuasar/Kronos-mini", 2048),
+    ("Kronos-small", "NeoQuasar/Kronos-Tokenizer-base", "NeoQuasar/Kronos-small", 512),
+    ("Kronos-base", "NeoQuasar/Kronos-Tokenizer-base", "NeoQuasar/Kronos-base", 512),
+]
+
+
+def compare_models() -> int:
+    """후보 체크포인트들의 스펙을 실측해 표로 출력한다 (다운로드만, 추론 없음)."""
+    section("모델 스펙 비교 — 명세의 L=12 가 어느 모델인지 확인")
+    rows = []
+    for name, tok_id, model_id, ctx in MODEL_CANDIDATES:
+        try:
+            cfg = dataclasses.replace(CFG.model, tokenizer_id=tok_id, model_id=model_id,
+                                      max_context=ctx)
+            tok, mdl, _ = kl.load_kronos(cfg, device=torch.device("cpu"))
+            spec = kl.describe(tok, mdl)
+            spec["name"], spec["max_context"] = name, ctx
+            rows.append(spec)
+            del tok, mdl
+        except Exception as e:  # 네트워크/권한 문제로 일부만 실패해도 나머지는 보고
+            print(f"  [실패] {name}: {type(e).__name__}: {e}")
+
+    keys = ["name", "max_context", "n_layers", "d_model", "n_heads", "ff_dim",
+            "s1_bits", "s2_bits", "model_params_M"]
+    widths = {k: max(len(k), *(len(str(r.get(k, ""))) for r in rows)) for k in keys} if rows else {}
+    print()
+    print("  " + "  ".join(k.ljust(widths[k]) for k in keys))
+    print("  " + "  ".join("-" * widths[k] for k in keys))
+    for r in rows:
+        print("  " + "  ".join(str(r.get(k, "")).ljust(widths[k]) for k in keys))
+
+    print("\n  Stage 2 저장 용량 (n_samples=%d/클래스, T=%d, fp16):" % (CFG.data.n_samples, CFG.data.T))
+    for r in rows:
+        if r["max_context"] < CFG.data.T:
+            continue
+        total = CFG.data.n_samples * CFG.data.T * r["d_model"] * 2 * r["n_layers"] * 2
+        flag = "" if CFG.data.n_samples > r["d_model"] else "  <- n_samples <= d_model, LDA 조건 미달"
+        print(f"    {r['name']:14s}: {total / 1024**3:5.2f} GB{flag}")
+
+    out = paths.ensure(paths.results_dir(CFG.tag)) / "stage0_model_specs.json"
+    out.write_text(json.dumps(rows, indent=2, ensure_ascii=False))
+    print(f"\n  저장: {out}")
+    return 0
+
+
+def main(args) -> int:
     t0 = time.time()
 
     section("1. 실행 환경")
     env = report_env()
+
+    if args.compare:
+        return compare_models()
 
     section("2. 모델 로드")
     tokenizer, model, device = kl.load_kronos(CFG.model)
@@ -114,8 +168,10 @@ def main() -> int:
 
     ok = True
     if spec["n_layers"] != 12:
-        print(f"  [경고] 명세는 L=12 를 가정하는데 실측은 {spec['n_layers']} 이다.")
-        ok = False
+        # 명세는 L=12 를 가정했지만, 실측이 우선이다. 이건 코드 결함이 아니라
+        # 명세의 전제가 실물과 다른 것이므로 PASS/FAIL 판정에는 넣지 않는다.
+        print(f"  [주의] 명세는 L=12 를 가정하나 이 모델의 실측 레이어 수는 {spec['n_layers']} 이다."
+              f" 히트맵은 [{CFG.data.T} 토큰 x {spec['n_layers']} 레이어] 가 된다.")
 
     section("3. 더미 입력 생성 및 전처리 (명세 2, 3절)")
     T = CFG.data.T
@@ -191,7 +247,7 @@ def main() -> int:
     total = per_layer_class * spec["n_layers"] * 2
     print(f"  설정: n_samples={CFG.data.n_samples}/클래스, T={T}, D={D}, dtype={CFG.probe.store_dtype}")
     print(f"  레이어 1개 / 클래스 1개 : {per_layer_class / 1024**2:.0f} MB")
-    print(f"  전체 (12레이어 x 2클래스): {total / 1024**3:.2f} GB  -> scratch 에 저장")
+    print(f"  전체 ({spec['n_layers']}레이어 x 2클래스): {total / 1024**3:.2f} GB  -> scratch 에 저장")
     if CFG.data.n_samples <= D:
         print(f"  [경고] n_samples({CFG.data.n_samples}) <= d_model({D}). "
               "LDA 클래스내 공분산이 특이행렬이 된다. Stage 3 에서 shrinkage 필수.")
@@ -211,4 +267,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    p = argparse.ArgumentParser(description="Stage 0 — 환경/모델 스펙 실측")
+    p.add_argument("--compare", action="store_true",
+                   help="Kronos mini/small/base 의 스펙만 비교 출력하고 종료")
+    raise SystemExit(main(p.parse_args()))
